@@ -1,3 +1,7 @@
 [server]
 
+Dòng này buộc Streamlit Cloud sử dụng phiên bản Python 3.11,
+
+giúp khắc phục lỗi "No matching distribution found" do không tương thích với Python 3.13.
+
 python_version = 3.11
