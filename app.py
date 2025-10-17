@@ -7,7 +7,8 @@ import av
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 import joblib
 from collections import deque
-import os # Giữ lại os, mặc dù không dùng trong code hiện tại
+import os 
+import warnings # Dùng để quản lý các cảnh báo nếu cần
 
 # ==============================
 # CẤU HÌNH CƠ BẢN
@@ -16,21 +17,17 @@ MODEL_PATH = "softmax_model_best.pkl" # Chứa W, b, classes
 SCALER_PATH = "scale.pkl"              # Chứa X_mean, X_std
 LABEL_MAP_PATH = "label_map.json"
 
-SMOOTH_WINDOW = 8 # Cửa sổ làm mượt (smoothing)
-EPS = 1e-8        # Số epsilon nhỏ để tránh chia cho 0
-WINDOW_SIZE = 15  # Cửa sổ khung hình để tính đặc trưng thống kê
-NEW_WIDTH, NEW_HEIGHT = 640, 480 # Kích thước khung hình sau khi resize
+SMOOTH_WINDOW = 8
+EPS = 1e-8 # Dùng 1e-8 như trong code huấn luyện
+WINDOW_SIZE = 15 
+NEW_WIDTH, NEW_HEIGHT = 640, 480 # Kích thước khung hình sau khi resize (tối ưu hiệu suất)
 
 # ==============================
 # HÀM DỰ ĐOÁN SOFTMAX
 # ==============================
 def softmax_predict(X, W, b):
     """Thực hiện dự đoán Softmax."""
-    # X: Đặc trưng đã được scale (shape: (1, n_features))
-    # W: Ma trận trọng số (shape: (n_features, n_classes))
-    # b: Vector bias (shape: (1, n_classes))
     logits = X @ W + b
-    # Trả về chỉ mục lớp có xác suất cao nhất
     return np.argmax(logits, axis=1)
 
 @st.cache_resource
@@ -52,22 +49,24 @@ def load_assets():
         # 3. Tải label map
         with open(LABEL_MAP_PATH, "r") as f:
             label_map = json.load(f)
-        # Chuyển đổi key từ string sang int (vì JSON lưu key là string)
         id2label = {int(v): k for k, v in label_map.items()}
 
         return W, b, mean_data, std_data, id2label
 
     except FileNotFoundError as e:
-        st.error(f"Lỗi File: Không tìm thấy file tài nguyên. Vui lòng kiểm tra đường dẫn: {e.filename}")
+        # Lỗi này chỉ ra file không tồn tại
+        st.error(f"LỖI FILE: Không tìm thấy file tài nguyên. Vui lòng kiểm tra đường dẫn: {e.filename}")
         st.stop()
     except KeyError as e:
-        st.error(f"Lỗi Key: Kiểm tra cấu trúc file model/scaler (thiếu key: {e}).")
+        # Lỗi này chỉ ra cấu trúc file model/scaler bị sai
+        st.error(f"LỖI CẤU TRÚC FILE: Kiểm tra cấu trúc file model/scaler (thiếu key: {e}).")
         st.stop()
     except Exception as e:
-        st.error(f"Lỗi Load: {e}")
+        # Lỗi này (Lỗi Load) thường là do file hỏng (corrupted)
+        st.error(f"LỖI LOAD DỮ LIỆU: File tài nguyên bị hỏng (corrupted) hoặc không thể giải mã. Chi tiết: {e}")
         st.stop()
 
-# Tải tài sản (Chạy một lần khi khởi động ứng dụng)
+# Tải tài sản (Chạy một lần)
 W, b, mean, std, id2label = load_assets()
 classes = list(id2label.values())
 
@@ -99,35 +98,22 @@ def head_pose_yaw_pitch_roll(landmarks):
     left_eye = landmarks[33][:2]
     right_eye = landmarks[263][:2]
     nose = landmarks[1][:2]
-    # chin = landmarks[152][:2] # Không cần chin để tính yaw/roll cơ bản
-    
+    chin = landmarks[152][:2]
+
     dx = right_eye[0] - left_eye[0]
     dy = right_eye[1] - left_eye[1]
-    
-    # Roll (Độ nghiêng của đầu)
     roll = np.degrees(np.arctan2(dy, dx + EPS))
-    
+
     interocular = np.linalg.norm(right_eye - left_eye) + EPS
     eyes_center = (left_eye + right_eye) / 2.0
-    
-    # Yaw (Xoay ngang - quay trái/phải)
-    # Lấy sự khác biệt x giữa mũi và tâm mắt, chuẩn hóa bằng khoảng cách giữa hai mắt.
     yaw = np.degrees(np.arctan2((nose[0] - eyes_center[0]), interocular))
-    
-    # Pitch (Gật đầu lên/xuống)
-    # Sử dụng sự khác biệt y giữa mũi và tâm mắt
-    pitch = np.degrees(np.arctan2((nose[1] - eyes_center[1]), interocular))
-    
-    # Góc pitch trong code cũ của bạn có sử dụng `chin`, tôi thay bằng công thức đơn giản hơn
-    # Nếu code huấn luyện gốc của bạn dùng chin, hãy giữ lại công thức đó.
-    # baseline = chin - eyes_center
-    # pitch = np.degrees(np.arctan2((nose[1] - eyes_center[1]), (np.linalg.norm(baseline) + EPS)))
-    
+
+    baseline = chin - eyes_center
+    pitch = np.degrees(np.arctan2((nose[1] - eyes_center[1]), (np.linalg.norm(baseline) + EPS)))
     return yaw, pitch, roll
 
 def get_extra_features(landmarks):
     nose, chin = landmarks[1], landmarks[152]
-    # Lưu ý: Tính toán z-coord có thể không ổn định
     angle_pitch_extra = np.degrees(np.arctan2(chin[1] - nose[1], (chin[2] - nose[2]) + EPS))
     forehead_y = np.mean(landmarks[[10, 338, 297, 332, 284], 1])
     cheek_dist = np.linalg.norm(landmarks[50] - landmarks[280])
@@ -139,20 +125,16 @@ def get_extra_features(landmarks):
 # ----------------------------------------------------------------------
 class DrowsinessProcessor(VideoProcessorBase):
     def __init__(self):
-        # Tải tham số Softmax từ st.cache_resource
         self.W = W
         self.b = b
         self.mean = mean
         self.std = std
         self.id2label = id2label
-        
-        # Khởi tạo Face Mesh (chỉ một lần)
         self.face_mesh = mp_face_mesh.FaceMesh(
             max_num_faces=1,
-            refine_landmarks=False, # Đã đặt False như trong code của bạn
+            refine_landmarks=False,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5)
-            
         self.frame_queue = deque(maxlen=WINDOW_SIZE)
         self.pred_queue = deque(maxlen=SMOOTH_WINDOW)
         self.last_pred_label = "CHO DU LIEU VAO"
@@ -160,25 +142,18 @@ class DrowsinessProcessor(VideoProcessorBase):
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         frame_array = frame.to_ndarray(format="bgr24")
 
-        # 💡 1. RESIZE KHUNG HÌNH (Tăng tốc độ xử lý)
+        # 1. RESIZE KHUNG HÌNH (Tăng tốc độ)
         frame_resized = cv2.resize(frame_array, (NEW_WIDTH, NEW_HEIGHT))
         h, w = frame_resized.shape[:2]
 
-        # Chuyển sang RGB (dùng khung hình đã resize)
         rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-        
-        # Xử lý Face Mesh
         results = self.face_mesh.process(rgb)
 
         # --- 2. TRÍCH XUẤT ĐẶC TRƯNG ---
         if results.multi_face_landmarks:
-            # landmarks được scale theo kích thước mới (640, 480)
             landmarks = np.array([[p.x * w, p.y * h, p.z * w] for p in results.multi_face_landmarks[0].landmark])
 
-            # Tính 9 đặc trưng cơ bản
-            ear_l = eye_aspect_ratio(landmarks, True)
-            ear_r = eye_aspect_ratio(landmarks, False)
-            mar = mouth_aspect_ratio(landmarks)
+            ear_l = eye_aspect_ratio(landmarks, True); ear_r = eye_aspect_ratio(landmarks, False); mar = mouth_aspect_ratio(landmarks)
             yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
             angle_pitch_extra, forehead_y, cheek_dist = get_extra_features(landmarks)
 
@@ -190,24 +165,18 @@ class DrowsinessProcessor(VideoProcessorBase):
             if len(self.frame_queue) == WINDOW_SIZE:
                 window = np.array(self.frame_queue)
 
-                # Tính 24 đặc trưng (Không thay đổi logic của bạn)
-                mean_feats = window.mean(axis=0)
-                std_feats = window.std(axis=0)
-                yaw_diff = np.mean(np.abs(np.diff(window[:, 3])))
-                pitch_diff = np.mean(np.abs(np.diff(window[:, 4])))
-                roll_diff = np.mean(np.abs(np.diff(window[:, 5])))
-                mar_mean = np.mean(window[:, 2])
-                ear_mean = np.mean((window[:, 0] + window[:, 1]) / 2.0)
-                mar_ear_ratio = mar_mean / (ear_mean + EPS)
-                yaw_pitch_ratio = np.mean(np.abs(window[:, 3])) / (np.mean(np.abs(window[:, 4])) + EPS)
-                
-                # Nối 24 đặc trưng
+                # Tính 24 đặc trưng thống kê (Giữ nguyên logic của bạn)
+                mean_feats = window.mean(axis=0); std_feats = window.std(axis=0)
+                yaw_diff = np.mean(np.abs(np.diff(window[:, 3]))); pitch_diff = np.mean(np.abs(np.diff(window[:, 4]))); roll_diff = np.mean(np.abs(np.diff(window[:, 5])))
+                mar_mean = np.mean(window[:, 2]); ear_mean = np.mean((window[:, 0] + window[:, 1]) / 2.0)
+                mar_ear_ratio = mar_mean / (ear_mean + EPS); yaw_pitch_ratio = np.mean(np.abs(window[:, 3])) / (np.mean(np.abs(window[:, 4])) + EPS)
                 feats_24 = np.concatenate([mean_feats, std_feats, [yaw_diff, pitch_diff, roll_diff, np.max(window[:, 2]), mar_ear_ratio, yaw_pitch_ratio]])
 
                 # Chuẩn hóa, Dự đoán
-                feats_scaled = (feats_24 - self.mean) / (self.std + EPS) # Thêm EPS để tránh chia cho 0
+                # 💡 Sửa: Thêm EPS vào mẫu số để tránh chia cho 0
+                feats_scaled = (feats_24 - self.mean) / (self.std + EPS) 
                 pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
-                
+
                 pred_label = self.id2label.get(pred_idx, f"Class {pred_idx}")
                 self.pred_queue.append(pred_label)
 
@@ -219,14 +188,11 @@ class DrowsinessProcessor(VideoProcessorBase):
 
         # --- 4. SMOOTHING VÀ HIỂN THỊ KẾT QUẢ ---
         if len(self.pred_queue) > 0:
-            # Chọn nhãn xuất hiện nhiều nhất trong cửa sổ làm mượt
             self.last_pred_label = max(set(self.pred_queue), key=self.pred_queue.count)
-        
-        # Chèn văn bản vào khung hình đã resize
+
         cv2.putText(frame_resized, f"Trang thai: {self.last_pred_label.upper()}", (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
 
-        # Trả về khung hình đã resize
         return av.VideoFrame.from_ndarray(frame_resized, format="bgr24")
 
 # ----------------------------------------------------------------------
@@ -238,14 +204,11 @@ st.success(f"Mô hình sẵn sàng! Các nhãn: {classes}")
 st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
 st.markdown("---")
 
-
-# Khởi tạo WebRTC Streamer
 webrtc_streamer(
     key="softmax_driver_live",
     mode=WebRtcMode.SENDRECV,
-    # Cấu hình STUN servers để thiết lập kết nối
     rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
     video_processor_factory=DrowsinessProcessor,
-    media_stream_constraints={"video": True, "audio": False}, # Chỉ bật video
-    async_processing=True, # Cho phép xử lý không đồng bộ (tăng tốc độ)
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
 )
