@@ -1,0 +1,8 @@
+{
+  "left": 0,
+  "right": 1,
+  "nod": 2,
+  "yawn": 3,
+  "blink": 4,
+  "normal": 5
+}
