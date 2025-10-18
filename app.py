@@ -13,6 +13,7 @@ from PIL import Image
 
 # Thêm khai báo mp_drawing (MP Solutions Drawing Utilities)
 mp_drawing = mp.solutions.drawing_utils
+mp_hands = mp.solutions.hands # Khai báo cho HAND_CONNECTIONS
 
 # ======================================================================
 # I. CẤU HÌNH VÀ HẰNG SỐ CHUNG
@@ -23,11 +24,11 @@ EPS = 1e-8
 NEW_WIDTH, NEW_HEIGHT = 640, 480 
 
 # --- Cấu hình Drowsiness (Face Mesh) ---
-MODEL_PATH = "softmax_model_best1.pkl" # PHẢI HUẤN LUYỆN TRÊN 10 FEATS (có Delta EAR)
+MODEL_PATH = "softmax_model_best1.pkl" # PHẢI HUẤN LUYỆN TRÊN 10 FEATS (có Delta EAR và Delta Pitch)
 SCALER_PATH = "scale1.pkl"
-LABEL_MAP_PATH = "label_map_6cls.json" # Cần kiểm tra lại nếu bạn dùng 6 lớp (có nod)
+LABEL_MAP_PATH = "label_map_6cls.json" 
 SMOOTH_WINDOW = 5 
-BLINK_THRESHOLD = 0.20 # Ngưỡng cứng cho BLINK
+BLINK_THRESHOLD = 0.20 # Ngưỡng cứng cho BLINK (đã giảm)
 N_FEATURES = 10 # Số lượng đặc trưng mong đợi
 
 # --- Cấu hình Wheel (Hands) ---
@@ -334,6 +335,7 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     
     if res_for_drawing.multi_hand_landmarks:
         for hand_landmarks in res_for_drawing.multi_hand_landmarks:
+            # Sửa lỗi: Gọi mp_drawing đã được khai báo ở phạm vi toàn cục
             mp_drawing.draw_landmarks( 
                 img_display, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
 
@@ -424,13 +426,14 @@ class DrowsinessProcessor(VideoProcessorBase):
 # VIII. GIAO DIỆN STREAMLIT CHÍNH
 # ======================================================================
 st.set_page_config(page_title="Demo Softmax - Hybrid Detection", layout="wide")
-st.title("🧠 Dự đoán xem tay có cầm vô lăng hay không")
+st.title("🧠 Ứng dụng Hybrid Nhận diện Trạng thái Lái xe")
 
 tab1, tab2, tab3 = st.tabs(["🔴 Dự đoán Live Camera", "🖼️ Dự đoán Ảnh Tĩnh (Khuôn Mặt)", "🚗 Kiểm tra Vô Lăng (Tay)"])
 mesh_static = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
 
 with tab1:
-    st.header("1. Nhận diện hành vi mất tập trung trên khuôn mặt (Live Camera)")
+    st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
+    st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.20) cho BLINK, dùng Softmax cho các hành vi khác.")
     st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
     st.markdown("---")
 
@@ -447,7 +450,7 @@ with tab1:
 
 with tab2:
     st.header("2. Dự đoán Ảnh Tĩnh (Khuôn Mặt)")
-    st.markdown("### Tải lên ảnh khuôn mặt để dự đoán trạng thái mất tập trung")
+    st.markdown("### Tải lên ảnh khuôn mặt để dự đoán trạng thái (Ngủ gật/Mất tập trung)")
     uploaded_file = st.file_uploader("Chọn một ảnh khuôn mặt (.jpg, .png)", type=["jpg", "png", "jpeg"], key="face_upload")
 
     if uploaded_file is not None:
@@ -460,7 +463,7 @@ with tab2:
         col_img, col_res = st.columns([2, 1])
         
         with col_img:
-            st.image(result_img_rgb, caption="Ảnh đã xử lý", use_column_width=True)
+            st.image(result_img_rgb, caption="Ảnh đã xử lý", use_container_width=True) # Dùng use_container_width
             
         with col_res:
             st.success("✅ Dự đoán Hoàn tất")
@@ -487,7 +490,7 @@ with tab3:
         col_img, col_res = st.columns([2, 1])
 
         with col_img:
-            st.image(result_img_rgb, caption="Ảnh đã xử lý (Vô lăng, Tay)", use_column_width=True)
+            st.image(result_img_rgb, caption="Ảnh đã xử lý (Vô lăng, Tay)", use_container_width=True) # Dùng use_container_width
             
         with col_res:
             st.success("✅ Dự đoán Hoàn tất")
