@@ -17,7 +17,8 @@ MODEL_PATH = "softmax_model_best1.pkl" # CẢNH BÁO: PHẢI ĐƯỢC HUẤN LUY
 SCALER_PATH = "scale1.pkl"              # CẢNH BÁO: PHẢI CHỨA MEAN/STD CHO 10 ĐẶC TRƯNG
 LABEL_MAP_PATH = "label_map_5cls.json"
 
-SMOOTH_WINDOW = 2 # ĐẶT LÀ 1 ĐỂ LOẠI BỎ SMOOTHING VÀ KIỂM TRA PREDICTION TỨC THỜI (FLICKERING)
+SMOOTH_WINDOW = 5 # Giữ ở 5 để đảm bảo ổn định cho các nhãn kéo dài (left, right, yawn)
+BLINK_THRESHOLD = 0.25 # HEURISTIC CỨNG ĐỂ BẮT BLINK
 EPS = 1e-8 
 NEW_WIDTH, NEW_HEIGHT = 640, 480 
 N_FEATURES = 10 # Số lượng đặc trưng mong đợi
@@ -153,40 +154,43 @@ class DrowsinessProcessor(VideoProcessorBase):
         results = self.face_mesh.process(rgb_flipped)
         
         delta_ear_value = 0.0
+        predicted_label_frame = "UNKNOWN"
 
-        # --- 2. TRÍCH XUẤT 10 ĐẶC TRƯNG ---
+        # --- 2. TRÍCH XUẤT 10 ĐẶC TRƯNG VÀ DỰ ĐOÁN ---
         if results.multi_face_landmarks:
             landmarks = np.array([[p.x * w, p.y * h, p.z * w] for p in results.multi_face_landmarks[0].landmark])
 
-            # 6 đặc trưng chính
+            # Tính EAR trung bình
             ear_l = eye_aspect_ratio(landmarks, True)
             ear_r = eye_aspect_ratio(landmarks, False)
-            mar = mouth_aspect_ratio(landmarks)
-            yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
-
-            # 3 đặc trưng tĩnh phụ trợ
-            angle_pitch_extra, forehead_y, cheek_dist = get_extra_features(landmarks)
-
-            # 1 đặc trưng động (Delta EAR)
             ear_avg = (ear_l + ear_r) / 2.0
-            delta_ear_value = ear_avg - self.last_ear_avg 
-            self.last_ear_avg = ear_avg # Cập nhật lịch sử
+            
+            # 1. ÁP DỤNG LUẬT HEURISTIC CỨNG CHO BLINK (TÍNH ĐỘ NHẠY TUYỆT ĐỐI)
+            if ear_avg < BLINK_THRESHOLD:
+                predicted_label_frame = "blink"
+            else:
+                # 2. SỬ DỤNG SOFTMAX CHO CÁC HÀNH VI KHÁC
+                
+                # Tính toán 9 đặc trưng còn lại
+                mar = mouth_aspect_ratio(landmarks)
+                yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
+                angle_pitch_extra, forehead_y, cheek_dist = get_extra_features(landmarks)
 
-            # Mảng 10 đặc trưng: [EAR_L, EAR_R, MAR, YAW, PITCH, ROLL, ANGLE_PITCH_EXTRA, DELTA_EAR, FOREHEAD_Y, CHEEK_DIST]
-            feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
-                              angle_pitch_extra, delta_ear_value, forehead_y, cheek_dist], dtype=np.float32)
+                # Tính Delta EAR (tính luôn cho dù không dùng trực tiếp trong mô hình, để cập nhật lịch sử)
+                delta_ear_value = ear_avg - self.last_ear_avg 
+                self.last_ear_avg = ear_avg
 
-            # --- 3. CHUẨN HÓA VÀ DỰ ĐOÁN ---
+                # Mảng 10 đặc trưng: [EAR_L, EAR_R, MAR, YAW, PITCH, ROLL, ANGLE_PITCH_EXTRA, DELTA_EAR, FOREHEAD_Y, CHEEK_DIST]
+                feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
+                                angle_pitch_extra, delta_ear_value, forehead_y, cheek_dist], dtype=np.float32)
+
+                # Chuẩn hóa và Dự đoán Softmax
+                feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
+                pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
+                predicted_label_frame = self.id2label.get(pred_idx, "UNKNOWN")
             
-            # Chuẩn hóa 10 đặc trưng
-            feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
-            
-            # Dự đoán Softmax
-            pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
-            pred_label = self.id2label.get(pred_idx, "UNKNOWN")
-            
-            # Add to smoothing queue
-            self.pred_queue.append(pred_label)
+            # Thêm nhãn đã quyết định (Hybrid) vào queue
+            self.pred_queue.append(predicted_label_frame)
         
         else:
              # Nếu mất mặt, reset lịch sử EAR
@@ -201,6 +205,9 @@ class DrowsinessProcessor(VideoProcessorBase):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
         cv2.putText(frame_resized, f"Delta EAR: {delta_ear_value:.3f}", (10, 110),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
+        cv2.putText(frame_resized, f"EAR Threshold: <{BLINK_THRESHOLD}", (10, 150),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
 
         # LOẠI BỎ THAO TÁC LẬT LẦN 2 TẠI ĐÂY ĐỂ HIỂN THỊ ĐÚNG
         frame_display = frame_resized 
@@ -209,9 +216,9 @@ class DrowsinessProcessor(VideoProcessorBase):
 # ----------------------------------------------------------------------
 ## GIAO DIỆN STREAMLIT CHÍNH
 # ----------------------------------------------------------------------
-st.set_page_config(page_title="Demo Softmax - 10 Features (Static + Delta EAR)", layout="wide")
-st.title("🧠 Nhận diện trạng thái mất tập trung (10 Đặc trưng - Static + Delta EAR)")
-st.warning("CẢNH BÁO: Mô hình phải được huấn luyện lại với 10 đặc trưng (bao gồm Delta EAR) để hoạt động chính xác!")
+st.set_page_config(page_title="Demo Softmax - Hybrid Detection", layout="wide")
+st.title("🧠 Nhận diện trạng thái mất tập trung (Hybrid Detection)")
+st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.25) cho BLINK, dùng Softmax cho các hành vi khác.")
 st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
 st.markdown("---")
 
@@ -226,5 +233,3 @@ with col2:
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
     )
-
-
