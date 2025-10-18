@@ -130,14 +130,18 @@ def process_static_image(image_file, mesh, W, b, mean, std, id2label):
     image_resized = cv2.resize(image, (NEW_WIDTH, NEW_HEIGHT))
     h, w = image_resized.shape[:2]
     
-    # Chuẩn bị ảnh cho MediaPipe (lật để tọa độ landmarks khớp)
-    image_for_mp = cv2.flip(image_resized, 1)
+    # CHUẨN BỊ ẢNH CHO MEDIAPIPE (Bắt buộc lật để tính landmarks chính xác)
+    image_for_mp = cv2.flip(image_resized, 1) # Lật ảnh trước khi xử lý
     
     # Xử lý MediaPipe
     results = mesh.process(image_for_mp)
     
     result_label = "Chưa tìm thấy khuôn mặt"
     
+    # Chuẩn bị ảnh hiển thị: BGR và Lật lại để người dùng thấy ảnh đúng
+    image_display_bgr = cv2.cvtColor(image_resized, cv2.COLOR_RGB2BGR)
+    image_display_flipped = cv2.flip(image_display_bgr, 1)
+
     if results.multi_face_landmarks:
         landmarks = np.array([[p.x * w, p.y * h, p.z * w] for p in results.multi_face_landmarks[0].landmark])
         
@@ -152,7 +156,7 @@ def process_static_image(image_file, mesh, W, b, mean, std, id2label):
         # 2. Xử lý đặc trưng động cho ảnh tĩnh (DELTA_EAR = 0)
         delta_ear_value = 0.0 # Bằng 0 vì không có sự thay đổi theo thời gian
         
-        # 3. Áp dụng luật Heuristic
+        # 3. ÁP DỤNG LUẬT HEURISTIC CỨNG (Ưu tiên BLINK nếu mắt nhắm)
         if ear_avg < BLINK_THRESHOLD:
             result_label = "BLINK (Heuristic)"
         else:
@@ -164,13 +168,7 @@ def process_static_image(image_file, mesh, W, b, mean, std, id2label):
             pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), W, b)[0]
             result_label = id2label.get(pred_idx, "UNKNOWN")
             
-        # Hiển thị kết quả:
-        # Chuyển RGB sang BGR để OpenCV xử lý text
-        image_display = cv2.cvtColor(image_resized, cv2.COLOR_RGB2BGR)
-        
-        # Lật ngược ảnh để người dùng thấy ảnh giống như ảnh gốc
-        image_display_flipped = cv2.flip(image_display, 1)
-
+        # Hiển thị kết quả lên ảnh đã lật ngược lại (image_display_flipped)
         cv2.putText(image_display_flipped, f"Trang thai: {result_label.upper()}", (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 3)
 
@@ -180,10 +178,11 @@ def process_static_image(image_file, mesh, W, b, mean, std, id2label):
         return final_image_rgb, result_label
 
     # Trường hợp không tìm thấy khuôn mặt
-    image_display = cv2.cvtColor(image_resized, cv2.COLOR_RGB2BGR)
-    cv2.putText(image_display, "KHONG TIM THAY KHUON MAT", (10, h // 2),
+    cv2.putText(image_display_flipped, "KHONG TIM THAY KHUON MAT", (10, h // 2),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    return image_display, result_label
+    final_image_rgb = cv2.cvtColor(image_display_flipped, cv2.COLOR_BGR2RGB)
+    
+    return final_image_rgb, result_label
 
 
 # ----------------------------------------------------------------------
