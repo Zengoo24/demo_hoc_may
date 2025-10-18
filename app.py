@@ -9,6 +9,7 @@ import joblib
 from collections import deque
 import os
 import warnings 
+from PIL import Image
 
 # ==============================
 # CẤU HÌNH
@@ -17,8 +18,8 @@ MODEL_PATH = "softmax_model_best1.pkl" # CẢNH BÁO: PHẢI ĐƯỢC HUẤN LUY
 SCALER_PATH = "scale1.pkl"              # CẢNH BÁO: PHẢI CHỨA MEAN/STD CHO 10 ĐẶC TRƯNG
 LABEL_MAP_PATH = "label_map_5cls.json"
 
-SMOOTH_WINDOW = 5 # Giữ ở 5 để đảm bảo ổn định cho các nhãn kéo dài (left, right, yawn)
-BLINK_THRESHOLD = 0.2 # ĐIỀU CHỈNH: Giảm xuống 0.22 để BLINK CỨNG khó bị kích hoạt hơn
+SMOOTH_WINDOW = 5 
+BLINK_THRESHOLD = 0.20 # Ngưỡng cứng cho BLINK
 EPS = 1e-8 
 NEW_WIDTH, NEW_HEIGHT = 640, 480 
 N_FEATURES = 10 # Số lượng đặc trưng mong đợi
@@ -71,7 +72,7 @@ W, b, mean, std, id2label = load_assets()
 classes = list(id2label.values())
 
 # ----------------------------------------------------------------------
-## HÀM TÍNH ĐẶC TRƯNG
+## HÀM TÍNH ĐẶC TRƯNG (Feature Extraction Functions)
 # ----------------------------------------------------------------------
 mp_face_mesh = mp.solutions.face_mesh
 EYE_LEFT_IDX = np.array([33, 159, 145, 133, 153, 144])
@@ -118,22 +119,74 @@ def get_extra_features(landmarks):
     cheek_dist = np.linalg.norm(landmarks[50] - landmarks[280])
     return angle_pitch_extra, forehead_y, cheek_dist
 
+# ----------------------------------------------------------------------
+## HÀM XỬ LÝ ẢNH TĨNH
+# ----------------------------------------------------------------------
+def process_static_image(image_file, mesh, W, b, mean, std, id2label):
+    # Đọc ảnh từ file uploader
+    image = np.array(Image.open(image_file).convert('RGB'))
+    
+    # Resize ảnh để xử lý nhanh hơn và chuẩn hóa kích thước
+    image_resized = cv2.resize(image, (NEW_WIDTH, NEW_HEIGHT))
+    h, w = image_resized.shape[:2]
+    
+    # MediaPipe yêu cầu ảnh đã lật
+    image_flipped = cv2.flip(image_resized, 1)
+    
+    # Xử lý MediaPipe
+    results = mesh.process(image_flipped)
+    
+    result_label = "Chưa tìm thấy khuôn mặt"
+    
+    if results.multi_face_landmarks:
+        landmarks = np.array([[p.x * w, p.y * h, p.z * w] for p in results.multi_face_landmarks[0].landmark])
+        
+        # 1. Trích xuất đặc trưng
+        ear_l = eye_aspect_ratio(landmarks, True)
+        ear_r = eye_aspect_ratio(landmarks, False)
+        ear_avg = (ear_l + ear_r) / 2.0
+        mar = mouth_aspect_ratio(landmarks)
+        yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
+        angle_pitch_extra, forehead_y, cheek_dist = get_extra_features(landmarks)
+        
+        # 2. Xử lý đặc trưng động cho ảnh tĩnh (DELTA_EAR = 0)
+        delta_ear_value = 0.0 # Bằng 0 vì không có sự thay đổi theo thời gian
+        
+        # 3. Áp dụng luật Heuristic
+        if ear_avg < BLINK_THRESHOLD:
+            result_label = "BLINK (Heuristic)"
+        else:
+            # 4. Chạy Softmax (10 đặc trưng)
+            feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
+                              angle_pitch_extra, delta_ear_value, forehead_y, cheek_dist], dtype=np.float32)
+
+            feats_scaled = (feats - mean[:N_FEATURES]) / (std[:N_FEATURES] + EPS)
+            pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), W, b)[0]
+            result_label = id2label.get(pred_idx, "UNKNOWN")
+            
+        # Hiển thị kết quả lên ảnh (lật lại để đúng hướng)
+        image_display = cv2.cvtColor(image_resized, cv2.COLOR_RGB2BGR)
+        cv2.putText(image_display, f"Trang thai: {result_label.upper()}", (10, 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 3)
+
+        return image_display, result_label
+
+    # Trường hợp không tìm thấy khuôn mặt
+    image_display = cv2.cvtColor(image_resized, cv2.COLOR_RGB2BGR)
+    cv2.putText(image_display, "KHONG TIM THAY KHUON MAT", (10, h // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+    return image_display, result_label
+
 
 # ----------------------------------------------------------------------
 ## WEBRTC VIDEO PROCESSOR (Logic xử lý Real-time)
 # ----------------------------------------------------------------------
 class DrowsinessProcessor(VideoProcessorBase):
     def __init__(self):
-        self.W = W
-        self.b = b
-        self.mean = mean
-        self.std = std
-        self.id2label = id2label
+        # Khởi tạo các tham số và MediaPipe
+        self.W = W; self.b = b; self.mean = mean; self.std = std; self.id2label = id2label
         self.face_mesh = mp_face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=False,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5)
+            max_num_faces=1, refine_landmarks=False, min_detection_confidence=0.5, min_tracking_confidence=0.5)
         
         self.pred_queue = deque(maxlen=SMOOTH_WINDOW)
         self.last_pred_label = "CHO DU LIEU VAO"
@@ -148,8 +201,7 @@ class DrowsinessProcessor(VideoProcessorBase):
         h, w = frame_resized.shape[:2]
 
         rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-        # Lật ảnh chỉ cho xử lý MediaPipe
-        rgb_flipped = cv2.flip(rgb, 1) 
+        rgb_flipped = cv2.flip(rgb, 1) # Lật ảnh chỉ cho xử lý MediaPipe
         
         results = self.face_mesh.process(rgb_flipped)
         
@@ -160,77 +212,92 @@ class DrowsinessProcessor(VideoProcessorBase):
         if results.multi_face_landmarks:
             landmarks = np.array([[p.x * w, p.y * h, p.z * w] for p in results.multi_face_landmarks[0].landmark])
 
-            # Tính EAR trung bình
-            ear_l = eye_aspect_ratio(landmarks, True)
-            ear_r = eye_aspect_ratio(landmarks, False)
-            ear_avg = (ear_l + ear_r) / 2.0
+            ear_l = eye_aspect_ratio(landmarks, True); ear_r = eye_aspect_ratio(landmarks, False); ear_avg = (ear_l + ear_r) / 2.0
             
-            # 1. ÁP DỤNG LUẬT HEURISTIC CỨNG CHO BLINK (TÍNH ĐỘ NHẠY TUYỆT ĐỐI)
+            # 1. ÁP DỤNG LUẬT HEURISTIC CỨNG CHO BLINK 
             if ear_avg < BLINK_THRESHOLD:
                 predicted_label_frame = "blink"
             else:
                 # 2. SỬ DỤNG SOFTMAX CHO CÁC HÀNH VI KHÁC
                 
-                # Tính toán 9 đặc trưng còn lại
                 mar = mouth_aspect_ratio(landmarks)
                 yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
                 angle_pitch_extra, forehead_y, cheek_dist = get_extra_features(landmarks)
 
-                # Tính Delta EAR (tính luôn cho dù không dùng trực tiếp trong mô hình, để cập nhật lịch sử)
                 delta_ear_value = ear_avg - self.last_ear_avg 
                 self.last_ear_avg = ear_avg
 
-                # Mảng 10 đặc trưng: [EAR_L, EAR_R, MAR, YAW, PITCH, ROLL, ANGLE_PITCH_EXTRA, DELTA_EAR, FOREHEAD_Y, CHEEK_DIST]
                 feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                                 angle_pitch_extra, delta_ear_value, forehead_y, cheek_dist], dtype=np.float32)
 
-                # Chuẩn hóa và Dự đoán Softmax
                 feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
                 pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
                 predicted_label_frame = self.id2label.get(pred_idx, "UNKNOWN")
             
-            # Thêm nhãn đã quyết định (Hybrid) vào queue
             self.pred_queue.append(predicted_label_frame)
         
         else:
-             # Nếu mất mặt, reset lịch sử EAR
              self.last_ear_avg = 0.4 
 
         # --- 4. SMOOTHING VÀ HIỂN THỊ KẾT QUẢ ---
         if len(self.pred_queue) > 0:
             self.last_pred_label = max(set(self.pred_queue), key=self.pred_queue.count)
         
-        
-        cv2.putText(frame_resized, f"Trang thai: {self.last_pred_label.upper()}", (10, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
-        cv2.putText(frame_resized, f"Delta EAR: {delta_ear_value:.3f}", (10, 110),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
-        cv2.putText(frame_resized, f"EAR Threshold: <{BLINK_THRESHOLD}", (10, 150),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame_resized, f"Trang thai: {self.last_pred_label.upper()}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
+        cv2.putText(frame_resized, f"Delta EAR: {delta_ear_value:.3f}", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
+        cv2.putText(frame_resized, f"EAR Threshold: <{BLINK_THRESHOLD}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-
-        # LOẠI BỎ THAO TÁC LẬT LẦN 2 TẠI ĐÂY ĐỂ HIỂN THỊ ĐÚNG
-        frame_display = frame_resized 
-        return av.VideoFrame.from_ndarray(frame_display, format="bgr24")
+        return av.VideoFrame.from_ndarray(frame_resized, format="bgr24")
 
 # ----------------------------------------------------------------------
 ## GIAO DIỆN STREAMLIT CHÍNH
 # ----------------------------------------------------------------------
 st.set_page_config(page_title="Demo Softmax - Hybrid Detection", layout="wide")
 st.title("🧠 Nhận diện trạng thái mất tập trung (Hybrid Detection)")
-st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.22) cho BLINK, dùng Softmax cho các hành vi khác.")
-st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
-st.markdown("---")
 
-col1, col2, col3 = st.columns([1, 4, 1]) 
+tab1, tab2 = st.tabs(["🔴 Dự đoán Live Camera", "🖼️ Dự đoán Ảnh Tĩnh"])
+mesh_static = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
 
-with col2: 
-    webrtc_streamer(
-        key="softmax_driver_live",
-        mode=WebRtcMode.SENDRECV,
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-        video_processor_factory=DrowsinessProcessor,
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True,
-    )
+with tab1:
+    st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.20) cho BLINK, dùng Softmax cho các hành vi khác.")
+    st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
+    st.markdown("---")
 
+    col1, col2, col3 = st.columns([1, 4, 1]) 
+    with col2: 
+        webrtc_streamer(
+            key="softmax_driver_live",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+            video_processor_factory=DrowsinessProcessor,
+            media_stream_constraints={"video": True, "audio": False},
+            async_processing=True,
+        )
+
+with tab2:
+    st.markdown("### Tải lên ảnh khuôn mặt để dự đoán trạng thái")
+    uploaded_file = st.file_uploader("Chọn một ảnh khuôn mặt (.jpg, .png)", type=["jpg", "png", "jpeg"])
+
+    if uploaded_file is not None:
+        st.info("Đang xử lý ảnh... ")
+        
+        # Xử lý và dự đoán
+        result_img_bgr, predicted_label = process_static_image(uploaded_file, mesh_static, W, b, mean, std, id2label)
+        
+        # Chuyển BGR sang RGB để Streamlit hiển thị đúng màu
+        result_img_rgb = cv2.cvtColor(result_img_bgr, cv2.COLOR_BGR2RGB)
+        
+        st.markdown("---")
+        
+        col_img, col_res = st.columns([2, 1])
+        
+        with col_img:
+            st.image(result_img_rgb, caption="Ảnh đã xử lý", use_column_width=True)
+            
+        with col_res:
+            st.success("✅ Dự đoán Hoàn tất")
+            st.metric(label="Trạng thái Dự đoán", value=predicted_label.upper())
+            st.caption(f"Lưu ý: Delta EAR cho ảnh tĩnh luôn bằng 0.")
+
+    else:
+        st.info("Vui lòng tải lên một ảnh để bắt đầu dự đoán.")
