@@ -130,11 +130,11 @@ def process_static_image(image_file, mesh, W, b, mean, std, id2label):
     image_resized = cv2.resize(image, (NEW_WIDTH, NEW_HEIGHT))
     h, w = image_resized.shape[:2]
     
-    # MediaPipe yêu cầu ảnh đã lật
-    image_flipped = cv2.flip(image_resized, 1)
+    # Chuẩn bị ảnh cho MediaPipe (lật để tọa độ landmarks khớp)
+    image_for_mp = cv2.flip(image_resized, 1)
     
     # Xử lý MediaPipe
-    results = mesh.process(image_flipped)
+    results = mesh.process(image_for_mp)
     
     result_label = "Chưa tìm thấy khuôn mặt"
     
@@ -164,12 +164,20 @@ def process_static_image(image_file, mesh, W, b, mean, std, id2label):
             pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), W, b)[0]
             result_label = id2label.get(pred_idx, "UNKNOWN")
             
-        # Hiển thị kết quả lên ảnh (lật lại để đúng hướng)
+        # Hiển thị kết quả:
+        # Chuyển RGB sang BGR để OpenCV xử lý text
         image_display = cv2.cvtColor(image_resized, cv2.COLOR_RGB2BGR)
-        cv2.putText(image_display, f"Trang thai: {result_label.upper()}", (10, 70),
+        
+        # Lật ngược ảnh để người dùng thấy ảnh giống như ảnh gốc
+        image_display_flipped = cv2.flip(image_display, 1)
+
+        cv2.putText(image_display_flipped, f"Trang thai: {result_label.upper()}", (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 3)
 
-        return image_display, result_label
+        # Chuyển lại BGR sang RGB cho Streamlit
+        final_image_rgb = cv2.cvtColor(image_display_flipped, cv2.COLOR_BGR2RGB)
+
+        return final_image_rgb, result_label
 
     # Trường hợp không tìm thấy khuôn mặt
     image_display = cv2.cvtColor(image_resized, cv2.COLOR_RGB2BGR)
@@ -282,16 +290,14 @@ with tab2:
         st.info("Đang xử lý ảnh... ")
         
         # Xử lý và dự đoán
-        result_img_bgr, predicted_label = process_static_image(uploaded_file, mesh_static, W, b, mean, std, id2label)
-        
-        # Chuyển BGR sang RGB để Streamlit hiển thị đúng màu
-        result_img_rgb = cv2.cvtColor(result_img_bgr, cv2.COLOR_BGR2RGB)
+        result_img_rgb, predicted_label = process_static_image(uploaded_file, mesh_static, W, b, mean, std, id2label)
         
         st.markdown("---")
         
         col_img, col_res = st.columns([2, 1])
         
         with col_img:
+            # Hiển thị ảnh đã được xử lý (đã là RGB)
             st.image(result_img_rgb, caption="Ảnh đã xử lý", use_column_width=True)
             
         with col_res:
