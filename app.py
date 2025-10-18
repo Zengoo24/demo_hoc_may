@@ -7,26 +7,26 @@ import av
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 import joblib
 from collections import deque
-import os 
-import warnings # Dùng để quản lý các cảnh báo nếu cần
+import os
+import warnings 
 
 # ==============================
 # CẤU HÌNH CƠ BẢN
 # ==============================
-MODEL_PATH = "softmax_model_best.pkl" # Chứa W, b, classes
-SCALER_PATH = "scale.pkl"              # Chứa X_mean, X_std
-LABEL_MAP_PATH = "label_map.json"
+MODEL_PATH = "softmax_model_best1.pkl" # Chứa W, b, classes
+SCALER_PATH = "scale1.pkl"              # Chứa X_mean, X_std
+LABEL_MAP_PATH = "label_map_5cls.json"
 
-SMOOTH_WINDOW = 8
-EPS = 1e-8 # Dùng 1e-8 như trong code huấn luyện
-WINDOW_SIZE = 15 
-NEW_WIDTH, NEW_HEIGHT = 640, 480 # Kích thước khung hình sau khi resize (tối ưu hiệu suất)
+SMOOTH_WINDOW = 8 # Chỉ dùng làm mượt kết quả đầu ra (label)
+EPS = 1e-8 
+NEW_WIDTH, NEW_HEIGHT = 640, 480 # Kích thước khung hình sau khi resize
 
 # ==============================
 # HÀM DỰ ĐOÁN SOFTMAX
 # ==============================
 def softmax_predict(X, W, b):
     """Thực hiện dự đoán Softmax."""
+    # X phải là (N, 9)
     logits = X @ W + b
     return np.argmax(logits, axis=1)
 
@@ -45,6 +45,13 @@ def load_assets():
             scaler_data = joblib.load(f)
             mean_data = scaler_data["X_mean"]
             std_data = scaler_data["X_std"]
+            
+        # Kiểm tra kích thước đặc trưng
+        EXPECTED_FEATURE_SIZE = 9
+        if W.shape[0] != EXPECTED_FEATURE_SIZE:
+             st.error(f"LỖI KHÔNG TƯƠNG THÍCH: Mô hình yêu cầu {W.shape[0]} đặc trưng, nhưng ứng dụng này chỉ trích xuất {EXPECTED_FEATURE_SIZE} đặc trưng tức thời.")
+             st.stop()
+
 
         # 3. Tải label map
         with open(LABEL_MAP_PATH, "r") as f:
@@ -54,22 +61,18 @@ def load_assets():
         return W, b, mean_data, std_data, id2label
 
     except FileNotFoundError as e:
-        # Lỗi này chỉ ra file không tồn tại
         st.error(f"LỖI FILE: Không tìm thấy file tài nguyên. Vui lòng kiểm tra đường dẫn: {e.filename}")
         st.stop()
     except KeyError as e:
-        # Lỗi này chỉ ra cấu trúc file model/scaler bị sai
         st.error(f"LỖI CẤU TRÚC FILE: Kiểm tra cấu trúc file model/scaler (thiếu key: {e}).")
         st.stop()
     except Exception as e:
-        # Lỗi này (Lỗi Load) thường là do file hỏng (corrupted)
         st.error(f"LỖI LOAD DỮ LIỆU: File tài nguyên bị hỏng (corrupted) hoặc không thể giải mã. Chi tiết: {e}")
         st.stop()
 
 # Tải tài sản (Chạy một lần)
 W, b, mean, std, id2label = load_assets()
 classes = list(id2label.values())
-
 
 # ----------------------------------------------------------------------
 ## HÀM TÍNH ĐẶC TRƯNG
@@ -135,9 +138,11 @@ class DrowsinessProcessor(VideoProcessorBase):
             refine_landmarks=False,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5)
-        self.frame_queue = deque(maxlen=WINDOW_SIZE)
+        
+        # Loại bỏ self.frame_queue vì không dùng windowing
         self.pred_queue = deque(maxlen=SMOOTH_WINDOW)
         self.last_pred_label = "CHO DU LIEU VAO"
+        self.N_FEATURES = 9 # Chỉ dùng 9 đặc trưng
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         frame_array = frame.to_ndarray(format="bgr24")
@@ -147,60 +152,59 @@ class DrowsinessProcessor(VideoProcessorBase):
         h, w = frame_resized.shape[:2]
 
         rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+        # Flip để gương mặt khớp với tọa độ (như trong code test cam desktop)
+        rgb = cv2.flip(rgb, 1) 
+        
         results = self.face_mesh.process(rgb)
+        
+        current_pred_label = "unknown"
 
-        # --- 2. TRÍCH XUẤT ĐẶC TRƯNG ---
+        # --- 2. TRÍCH XUẤT 9 ĐẶC TRƯNG TỨC THỜI ---
         if results.multi_face_landmarks:
             landmarks = np.array([[p.x * w, p.y * h, p.z * w] for p in results.multi_face_landmarks[0].landmark])
 
+            # Tính toán 9 đặc trưng tức thời
             ear_l = eye_aspect_ratio(landmarks, True); ear_r = eye_aspect_ratio(landmarks, False); mar = mouth_aspect_ratio(landmarks)
             yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
             angle_pitch_extra, forehead_y, cheek_dist = get_extra_features(landmarks)
 
-            feat = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
+            # Mảng 9 đặc trưng
+            feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                               angle_pitch_extra, forehead_y, cheek_dist], dtype=np.float32)
-            self.frame_queue.append(feat)
 
-            # --- 3. DỰ ĐOÁN KHI ĐỦ KHUNG HÌNH ---
-            if len(self.frame_queue) == WINDOW_SIZE:
-                window = np.array(self.frame_queue)
+            # --- 3. CHUẨN HÓA VÀ DỰ ĐOÁN ---
+            
+            # Chuẩn hóa chỉ trên 9 đặc trưng
+            feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
+            
+            # Dự đoán Softmax (đầu vào là mảng 2D: (1, 9))
+            pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
 
-                # Tính 24 đặc trưng thống kê (Giữ nguyên logic của bạn)
-                mean_feats = window.mean(axis=0); std_feats = window.std(axis=0)
-                yaw_diff = np.mean(np.abs(np.diff(window[:, 3]))); pitch_diff = np.mean(np.abs(np.diff(window[:, 4]))); roll_diff = np.mean(np.abs(np.diff(window[:, 5])))
-                mar_mean = np.mean(window[:, 2]); ear_mean = np.mean((window[:, 0] + window[:, 1]) / 2.0)
-                mar_ear_ratio = mar_mean / (ear_mean + EPS); yaw_pitch_ratio = np.mean(np.abs(window[:, 3])) / (np.mean(np.abs(window[:, 4])) + EPS)
-                feats_24 = np.concatenate([mean_feats, std_feats, [yaw_diff, pitch_diff, roll_diff, np.max(window[:, 2]), mar_ear_ratio, yaw_pitch_ratio]])
-
-                # Chuẩn hóa, Dự đoán
-                # 💡 Sửa: Thêm EPS vào mẫu số để tránh chia cho 0
-                feats_scaled = (feats_24 - self.mean) / (self.std + EPS) 
-                pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
-
-                pred_label = self.id2label.get(pred_idx, f"Class {pred_idx}")
-                self.pred_queue.append(pred_label)
-
-                # Xóa khung hình cũ (overlap)
-                FRAMES_TO_DELETE = 5
-                for _ in range(FRAMES_TO_DELETE):
-                    if self.frame_queue:
-                        self.frame_queue.popleft()
+            pred_label = self.id2label.get(pred_idx, f"Class {pred_idx}")
+            
+            # Lấy xác suất cao nhất cho CONF_THRESHOLD (tùy chọn)
+            # Hiện tại, chỉ cần thêm label vào queue để làm mượt
+            self.pred_queue.append(pred_label)
 
         # --- 4. SMOOTHING VÀ HIỂN THỊ KẾT QUẢ ---
         if len(self.pred_queue) > 0:
+            # Lấy nhãn xuất hiện nhiều nhất trong cửa sổ làm mượt
             self.last_pred_label = max(set(self.pred_queue), key=self.pred_queue.count)
-
+        
+        
         cv2.putText(frame_resized, f"Trang thai: {self.last_pred_label.upper()}", (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
 
-        return av.VideoFrame.from_ndarray(frame_resized, format="bgr24")
+        # Cần flip lại khung hình trước khi trả về để hiển thị đúng
+        frame_display = cv2.flip(frame_resized, 1)
+        return av.VideoFrame.from_ndarray(frame_display, format="bgr24")
 
 # ----------------------------------------------------------------------
 ## GIAO DIỆN STREAMLIT CHÍNH
 # ----------------------------------------------------------------------
-st.set_page_config(page_title="Demo Softmax", layout="wide")
-st.title("🧠 Nhận diện trạng thái mất tập trung bằng mô hình học máy.")
-st.success(f"Mô hình sẵn sàng! Các nhãn: {classes}")
+st.set_page_config(page_title="Demo Softmax - 9 Đặc trưng Tức thời", layout="wide")
+st.title("🧠 Nhận diện trạng thái mất tập trung bằng 9 đặc trưng khuôn mặt (Thời gian thực)")
+st.success(f"Mô hình sẵn sàng! Các nhãn: {classes} | Cần 9 đặc trưng.")
 st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
 st.markdown("---")
 
