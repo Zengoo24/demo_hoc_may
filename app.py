@@ -17,7 +17,7 @@ MODEL_PATH = "softmax_model_best1.pkl" # Chứa W, b, classes
 SCALER_PATH = "scale1.pkl"              # Chứa X_mean, X_std
 LABEL_MAP_PATH = "label_map_5cls.json"
 
-SMOOTH_WINDOW = 8 # Chỉ dùng làm mượt kết quả đầu ra (label)
+SMOOTH_WINDOW = 4 # Chỉ dùng làm mượt kết quả đầu ra (label)
 EPS = 1e-8 
 NEW_WIDTH, NEW_HEIGHT = 640, 480 # Kích thước khung hình sau khi resize
 
@@ -222,3 +222,4 @@ with col2: # Đặt component vào cột giữa
         async_processing=True,
     )
 # =================================================================
+
