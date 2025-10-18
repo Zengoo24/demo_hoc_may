@@ -23,11 +23,11 @@ EPS = 1e-8
 NEW_WIDTH, NEW_HEIGHT = 640, 480 
 
 # --- Cấu hình Drowsiness (Face Mesh) ---
-MODEL_PATH = "softmax_model_best1.pkl"
+MODEL_PATH = "softmax_model_best1.pkl" # PHẢI HUẤN LUYỆN TRÊN 10 FEATS (có Delta EAR)
 SCALER_PATH = "scale1.pkl"
-LABEL_MAP_PATH = "label_map_5cls.json"
+LABEL_MAP_PATH = "label_map_6cls.json" # Cần kiểm tra lại nếu bạn dùng 6 lớp (có nod)
 SMOOTH_WINDOW = 5 
-BLINK_THRESHOLD = 0.20 
+BLINK_THRESHOLD = 0.20 # Ngưỡng cứng cho BLINK
 N_FEATURES = 10 # Số lượng đặc trưng mong đợi
 
 # --- Cấu hình Wheel (Hands) ---
@@ -90,7 +90,7 @@ def load_assets():
             X_mean_WHEEL = wheel_scaler_data["X_mean"]
             X_std_WHEEL = wheel_scaler_data["X_std"]
 
-        # ĐÃ SỬA: Bỏ X_std_WHEEL bị lặp thừa
+        # 10 giá trị: W, b, mean, std, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL
         return W, b, mean_data, std_data, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL
 
     except FileNotFoundError as e:
@@ -102,7 +102,6 @@ def load_assets():
         st.stop()
 
 # Tải tài sản (Chạy một lần)
-# ĐÃ SỬA: Bỏ X_std_WHEEL bị lặp thừa, chỉ gán 10 giá trị
 W, b, mean, std, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL = load_assets()
 classes = list(id2label.values())
 
@@ -254,6 +253,7 @@ def process_static_image(image_file, mesh, W, b, mean, std, id2label):
             result_label = "BLINK (Heuristic)"
         else:
             # 4. Chạy Softmax (10 đặc trưng)
+            # Mảng 10 đặc trưng: [EAR_L, EAR_R, MAR, YAW, PITCH, ROLL, ANGLE_PITCH_EXTRA, DELTA_EAR, FOREHEAD_Y, CHEEK_DIST]
             feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                               angle_pitch_extra, delta_ear_value, forehead_y, cheek_dist], dtype=np.float32)
 
@@ -334,9 +334,8 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     
     if res_for_drawing.multi_hand_landmarks:
         for hand_landmarks in res_for_drawing.multi_hand_landmarks:
-            # SỬA LỖI: Thay thế mp_hands.drawing_utils bằng mp_drawing
             mp_drawing.draw_landmarks( 
-                img_display, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                img_display, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
 
     # Hiển thị nhãn dự đoán
     text = f"{predicted_class.upper()} ({confidence:.1f}%)"
@@ -394,13 +393,15 @@ class DrowsinessProcessor(VideoProcessorBase):
                 yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
                 angle_pitch_extra, forehead_y, cheek_dist = get_extra_features(landmarks)
 
+                # Tính Delta EAR (ĐẶC TRƯNG THỨ 10)
                 delta_ear_value = ear_avg - self.last_ear_avg 
                 self.last_ear_avg = ear_avg
 
+                # Mảng 10 đặc trưng: [EAR_L, EAR_R, MAR, YAW, PITCH, ROLL, ANGLE_PITCH_EXTRA, DELTA_EAR, FOREHEAD_Y, CHEEK_DIST]
                 feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                                 angle_pitch_extra, delta_ear_value, forehead_y, cheek_dist], dtype=np.float32)
 
-                feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:N_FEATURES] + EPS)
+                feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
                 pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
                 predicted_label_frame = self.id2label.get(pred_idx, "UNKNOWN")
             
@@ -422,13 +423,14 @@ class DrowsinessProcessor(VideoProcessorBase):
 # ======================================================================
 # VIII. GIAO DIỆN STREAMLIT CHÍNH
 # ======================================================================
-st.set_page_config(page_title="Demo nhận diện các hành vi mất tập trung - Softmax ", layout="wide")
+st.set_page_config(page_title="Demo Softmax - Hybrid Detection", layout="wide")
+st.title("🧠 Dự đoán xem tay có cầm vô lăng hay không")
 
 tab1, tab2, tab3 = st.tabs(["🔴 Dự đoán Live Camera", "🖼️ Dự đoán Ảnh Tĩnh (Khuôn Mặt)", "🚗 Kiểm tra Vô Lăng (Tay)"])
 mesh_static = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
 
 with tab1:
-    st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
+    st.header("1. Nhận diện hành vi mất tập trung trên khuôn mặt (Live Camera)")
     st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
     st.markdown("---")
 
@@ -445,7 +447,7 @@ with tab1:
 
 with tab2:
     st.header("2. Dự đoán Ảnh Tĩnh (Khuôn Mặt)")
-    st.markdown("### Tải lên ảnh khuôn mặt để dự đoán trạng thái Mất tập trung")
+    st.markdown("### Tải lên ảnh khuôn mặt để dự đoán trạng thái mất tập trung")
     uploaded_file = st.file_uploader("Chọn một ảnh khuôn mặt (.jpg, .png)", type=["jpg", "png", "jpeg"], key="face_upload")
 
     if uploaded_file is not None:
@@ -494,5 +496,3 @@ with tab3:
             
     else:
         st.info("Vui lòng tải lên một ảnh lái xe để kiểm tra vị trí tay.")
-
-
