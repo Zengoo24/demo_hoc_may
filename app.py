@@ -17,9 +17,12 @@ MODEL_PATH = "softmax_model_best1.pkl" # Chứa W, b, classes
 SCALER_PATH = "scale1.pkl"              # Chứa X_mean, X_std
 LABEL_MAP_PATH = "label_map_5cls.json"
 
-SMOOTH_WINDOW = 4 # Chỉ dùng làm mượt kết quả đầu ra (label)
+SMOOTH_WINDOW = 3 # Giữ 3 để tăng độ nhạy
 EPS = 1e-8 
 NEW_WIDTH, NEW_HEIGHT = 640, 480 # Kích thước khung hình sau khi resize
+
+# NGƯỠNG EAR CỨNG: Nếu EAR < 0.25, BUỘC nhận diện là BLINK
+BLINK_THRESHOLD = 0.25 
 
 # ==============================
 # HÀM DỰ ĐOÁN SOFTMAX
@@ -61,7 +64,7 @@ def load_assets():
         return W, b, mean_data, std_data, id2label
 
     except FileNotFoundError as e:
-        st.error(f"LỖI FILE: Không tìm thấy file tài nguyên. Vui lòng kiểm tra đường dẫn: {e.filename}")
+        st.error(f"LỖỖI FILE: Không tìm thấy file tài nguyên. Vui lòng kiểm tra đường dẫn: {e.filename}")
         st.stop()
     except KeyError as e:
         st.error(f"LỖI CẤU TRÚC FILE: Kiểm tra cấu trúc file model/scaler (thiếu key: {e}).")
@@ -139,10 +142,9 @@ class DrowsinessProcessor(VideoProcessorBase):
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5)
         
-        # Loại bỏ self.frame_queue vì không dùng windowing
         self.pred_queue = deque(maxlen=SMOOTH_WINDOW)
         self.last_pred_label = "CHO DU LIEU VAO"
-        self.N_FEATURES = 9 # Chỉ dùng 9 đặc trưng
+        self.N_FEATURES = 9 
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         frame_array = frame.to_ndarray(format="bgr24")
@@ -153,7 +155,6 @@ class DrowsinessProcessor(VideoProcessorBase):
 
         rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
         # Flip để gương mặt khớp với tọa độ (như trong code test cam desktop)
-        # THAO TÁC NÀY ĐƯỢC GIỮ LẠI ĐỂ TÍNH TOÁN LANDMARKS CHÍNH XÁC
         rgb_flipped = cv2.flip(rgb, 1) 
         
         results = self.face_mesh.process(rgb_flipped)
@@ -165,26 +166,34 @@ class DrowsinessProcessor(VideoProcessorBase):
             landmarks = np.array([[p.x * w, p.y * h, p.z * w] for p in results.multi_face_landmarks[0].landmark])
 
             # Tính toán 9 đặc trưng tức thời
-            ear_l = eye_aspect_ratio(landmarks, True); ear_r = eye_aspect_ratio(landmarks, False); mar = mouth_aspect_ratio(landmarks)
+            ear_l = eye_aspect_ratio(landmarks, True)
+            ear_r = eye_aspect_ratio(landmarks, False)
+            mar = mouth_aspect_ratio(landmarks)
             yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
             angle_pitch_extra, forehead_y, cheek_dist = get_extra_features(landmarks)
+            
+            # Tính EAR trung bình
+            ear_avg = (ear_l + ear_r) / 2.0 
 
             # Mảng 9 đặc trưng
             feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                               angle_pitch_extra, forehead_y, cheek_dist], dtype=np.float32)
 
-            # --- 3. CHUẨN HÓA VÀ DỰ ĐOÁN ---
+            # --- 3. DỰ ĐOÁN VÀ ƯU TIÊN BLINK ---
             
-            # Chuẩn hóa chỉ trên 9 đặc trưng
-            feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
+            if ear_avg < BLINK_THRESHOLD:
+                # Nếu EAR quá thấp, BUỘC nhận diện là blink (giải pháp heuristic)
+                pred_label = "blink"
+            else:
+                # Chạy Softmax cho các nhãn khác
+                # Chuẩn hóa chỉ trên 9 đặc trưng
+                feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
+                
+                # Dự đoán Softmax
+                pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
+                pred_label = self.id2label.get(pred_idx, f"Class {pred_idx}")
             
-            # Dự đoán Softmax (đầu vào là mảng 2D: (1, 9))
-            pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
-
-            pred_label = self.id2label.get(pred_idx, f"Class {pred_idx}")
-            
-            # Lấy xác suất cao nhất cho CONF_THRESHOLD (tùy chọn)
-            # Hiện tại, chỉ cần thêm label vào queue để làm mượt
+            # Thêm vào queue làm mượt
             self.pred_queue.append(pred_label)
 
         # --- 4. SMOOTHING VÀ HIỂN THỊ KẾT QUẢ ---
@@ -195,8 +204,10 @@ class DrowsinessProcessor(VideoProcessorBase):
         
         cv2.putText(frame_resized, f"Trang thai: {self.last_pred_label.upper()}", (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
+        cv2.putText(frame_resized, f"EAR avg: {ear_avg:.2f}", (10, 110),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2) # Hiển thị EAR để dễ debug
 
-        # BỎ THAO TÁC LẬT LẦN 2: Dùng frame_resized để hiển thị, vì đã lật cho xử lý MediaPipe rồi.
+        # BỎ THAO TÁC LẬT LẦN 2
         frame_display = frame_resized 
         return av.VideoFrame.from_ndarray(frame_display, format="bgr24")
 
@@ -221,5 +232,3 @@ with col2: # Đặt component vào cột giữa
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
     )
-# =================================================================
-
