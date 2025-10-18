@@ -428,7 +428,6 @@ mesh_static = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, ref
 
 with tab1:
     st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
-    st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.20) cho BLINK, dùng Softmax cho các hành vi khác.")
     st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
     st.markdown("---")
 
@@ -494,3 +493,4 @@ with tab3:
             
     else:
         st.info("Vui lòng tải lên một ảnh lái xe để kiểm tra vị trí tay.")
+
