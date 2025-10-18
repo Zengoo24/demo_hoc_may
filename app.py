@@ -17,7 +17,7 @@ MODEL_PATH = "softmax_model_best1.pkl" # CẢNH BÁO: PHẢI ĐƯỢC HUẤN LUY
 SCALER_PATH = "scale1.pkl"              # CẢNH BÁO: PHẢI CHỨA MEAN/STD CHO 10 ĐẶC TRƯNG
 LABEL_MAP_PATH = "label_map_5cls.json"
 
-SMOOTH_WINDOW = 3 # Độ mượt thấp (3) để tăng độ nhạy cho blink
+SMOOTH_WINDOW = 1 # ĐẶT LÀ 1 ĐỂ LOẠI BỎ SMOOTHING VÀ KIỂM TRA PREDICTION TỨC THỜI (FLICKERING)
 EPS = 1e-8 
 NEW_WIDTH, NEW_HEIGHT = 640, 480 
 N_FEATURES = 10 # Số lượng đặc trưng mong đợi
@@ -147,6 +147,7 @@ class DrowsinessProcessor(VideoProcessorBase):
         h, w = frame_resized.shape[:2]
 
         rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+        # Lật ảnh chỉ cho xử lý MediaPipe
         rgb_flipped = cv2.flip(rgb, 1) 
         
         results = self.face_mesh.process(rgb_flipped)
@@ -201,8 +202,8 @@ class DrowsinessProcessor(VideoProcessorBase):
         cv2.putText(frame_resized, f"Delta EAR: {delta_ear_value:.3f}", (10, 110),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
 
-        # Hiển thị ảnh gương
-        frame_display = cv2.flip(frame_resized, 1) 
+        # LOẠI BỎ THAO TÁC LẬT LẦN 2 TẠI ĐÂY ĐỂ HIỂN THỊ ĐÚNG
+        frame_display = frame_resized 
         return av.VideoFrame.from_ndarray(frame_display, format="bgr24")
 
 # ----------------------------------------------------------------------
