@@ -87,7 +87,8 @@ def load_assets():
             X_mean_WHEEL = wheel_scaler_data["X_mean"]
             X_std_WHEEL = wheel_scaler_data["X_std"]
 
-        return W, b, mean_data, std_data, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL
+        # ĐÃ SỬA: Bỏ X_std_WHEEL bị lặp thừa
+        return W, b, mean_data, std_data, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL
 
     except FileNotFoundError as e:
         # Xử lý lỗi nếu thiếu file model nào đó
@@ -98,6 +99,7 @@ def load_assets():
         st.stop()
 
 # Tải tài sản (Chạy một lần)
+# ĐÃ SỬA: Bỏ X_std_WHEEL bị lặp thừa, chỉ gán 10 giá trị
 W, b, mean, std, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL = load_assets()
 classes = list(id2label.values())
 
@@ -423,6 +425,7 @@ mesh_static = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, ref
 
 with tab1:
     st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
+    st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.20) cho BLINK, dùng Softmax cho các hành vi khác.")
     st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
     st.markdown("---")
 
