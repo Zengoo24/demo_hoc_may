@@ -153,9 +153,10 @@ class DrowsinessProcessor(VideoProcessorBase):
 
         rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
         # Flip để gương mặt khớp với tọa độ (như trong code test cam desktop)
-        rgb = cv2.flip(rgb, 1) 
+        # THAO TÁC NÀY ĐƯỢC GIỮ LẠI ĐỂ TÍNH TOÁN LANDMARKS CHÍNH XÁC
+        rgb_flipped = cv2.flip(rgb, 1) 
         
-        results = self.face_mesh.process(rgb)
+        results = self.face_mesh.process(rgb_flipped)
         
         current_pred_label = "unknown"
 
@@ -195,8 +196,8 @@ class DrowsinessProcessor(VideoProcessorBase):
         cv2.putText(frame_resized, f"Trang thai: {self.last_pred_label.upper()}", (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
 
-        # Cần flip lại khung hình trước khi trả về để hiển thị đúng
-        frame_display = cv2.flip(frame_resized, 1)
+        # BỎ THAO TÁC LẬT LẦN 2: Dùng frame_resized để hiển thị, vì đã lật cho xử lý MediaPipe rồi.
+        frame_display = frame_resized 
         return av.VideoFrame.from_ndarray(frame_display, format="bgr24")
 
 # ----------------------------------------------------------------------
@@ -208,11 +209,16 @@ st.success(f"Mô hình sẵn sàng! Các nhãn: {classes} | Cần 9 đặc trưn
 st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
 st.markdown("---")
 
-webrtc_streamer(
-    key="softmax_driver_live",
-    mode=WebRtcMode.SENDRECV,
-    rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-    video_processor_factory=DrowsinessProcessor,
-    media_stream_constraints={"video": True, "audio": False},
-    async_processing=True,
-)
+# === Đã thêm cấu trúc cột để căn giữa và thu hẹp màn hình video ===
+col1, col2, col3 = st.columns([1, 4, 1]) # Tỷ lệ 1:4:1 giúp căn giữa video
+
+with col2: # Đặt component vào cột giữa
+    webrtc_streamer(
+        key="softmax_driver_live",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        video_processor_factory=DrowsinessProcessor,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+    )
+# =================================================================
