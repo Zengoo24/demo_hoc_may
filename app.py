@@ -21,8 +21,7 @@ SMOOTH_WINDOW = 3 # Giữ 3 để tăng độ nhạy
 EPS = 1e-8 
 NEW_WIDTH, NEW_HEIGHT = 640, 480 # Kích thước khung hình sau khi resize
 
-# NGƯỠNG EAR CỨNG: Nếu EAR < 0.25, BUỘC nhận diện là BLINK
-BLINK_THRESHOLD = 0.25 
+# NGƯỠNG EAR CỨNG: ĐÃ LOẠI BỎ THEO YÊU CẦU
 
 # ==============================
 # HÀM DỰ ĐOÁN SOFTMAX
@@ -67,10 +66,10 @@ def load_assets():
         st.error(f"LỖỖI FILE: Không tìm thấy file tài nguyên. Vui lòng kiểm tra đường dẫn: {e.filename}")
         st.stop()
     except KeyError as e:
-        st.error(f"LỖI CẤU TRÚC FILE: Kiểm tra cấu trúc file model/scaler (thiếu key: {e}).")
+        st.error(f"LỖỖI CẤU TRÚC FILE: Kiểm tra cấu trúc file model/scaler (thiếu key: {e}).")
         st.stop()
     except Exception as e:
-        st.error(f"LỖI LOAD DỮ LIỆU: File tài nguyên bị hỏng (corrupted) hoặc không thể giải mã. Chi tiết: {e}")
+        st.error(f"LỖỖI LOAD DỮ LIỆU: File tài nguyên bị hỏng (corrupted) hoặc không thể giải mã. Chi tiết: {e}")
         st.stop()
 
 # Tải tài sản (Chạy một lần)
@@ -172,26 +171,20 @@ class DrowsinessProcessor(VideoProcessorBase):
             yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
             angle_pitch_extra, forehead_y, cheek_dist = get_extra_features(landmarks)
             
-            # Tính EAR trung bình
-            ear_avg = (ear_l + ear_r) / 2.0 
+            # ear_avg = (ear_l + ear_r) / 2.0 -> KHÔNG CẦN NỮA
 
             # Mảng 9 đặc trưng
             feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                               angle_pitch_extra, forehead_y, cheek_dist], dtype=np.float32)
 
-            # --- 3. DỰ ĐOÁN VÀ ƯU TIÊN BLINK ---
+            # --- 3. DỰ ĐOÁN SOFTMAX ---
             
-            if ear_avg < BLINK_THRESHOLD:
-                # Nếu EAR quá thấp, BUỘC nhận diện là blink (giải pháp heuristic)
-                pred_label = "blink"
-            else:
-                # Chạy Softmax cho các nhãn khác
-                # Chuẩn hóa chỉ trên 9 đặc trưng
-                feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
-                
-                # Dự đoán Softmax
-                pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
-                pred_label = self.id2label.get(pred_idx, f"Class {pred_idx}")
+            # Chuẩn hóa chỉ trên 9 đặc trưng
+            feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
+            
+            # Dự đoán Softmax
+            pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
+            pred_label = self.id2label.get(pred_idx, f"Class {pred_idx}")
             
             # Thêm vào queue làm mượt
             self.pred_queue.append(pred_label)
@@ -204,8 +197,8 @@ class DrowsinessProcessor(VideoProcessorBase):
         
         cv2.putText(frame_resized, f"Trang thai: {self.last_pred_label.upper()}", (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
-        cv2.putText(frame_resized, f"EAR avg: {ear_avg:.2f}", (10, 110),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2) # Hiển thị EAR để dễ debug
+        # LOẠI BỎ HIỂN THỊ EAR AVG
+        # cv2.putText(frame_resized, f"EAR avg: {ear_avg:.2f}", (10, 110), ...)
 
         # BỎ THAO TÁC LẬT LẦN 2
         frame_display = frame_resized 
