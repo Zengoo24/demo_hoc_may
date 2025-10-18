@@ -279,7 +279,7 @@ def process_static_image(image_file, mesh, W, b, mean, std, id2label):
     return final_image_rgb, result_label
 
 # ----------------------------------------------------------------------
-## VI. HÀM XỬ LÝ ẢNH TĨNH (Wheel) - CHỈ SỬA LỖI ATTRIBUTEERROR
+## VI. HÀM XỬ LÝ ẢNH TĨNH (Wheel) - ĐÃ SỬA LỖI ATTRIBUTEERROR
 # ----------------------------------------------------------------------
 def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL):
     # Đọc ảnh từ file uploader
@@ -335,7 +335,7 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     
     if res_for_drawing.multi_hand_landmarks:
         for hand_landmarks in res_for_drawing.multi_hand_landmarks:
-            # ĐÃ SỬA LỖI: Gọi mp_drawing và tham chiếu mp_hands.HAND_CONNECTIONS (Định nghĩa ở global)
+            # ĐÃ SỬA LỖI: Gọi mp_drawing và tham chiếu mp_hands.HAND_CONNECTIONS
             mp_drawing.draw_landmarks( 
                 img_display, hand_landmarks, mp_hands.HAND_CONNECTIONS) 
 
@@ -442,7 +442,7 @@ with tab1:
         webrtc_streamer(
             key="softmax_driver_live",
             mode=WebRtcMode.SENDRECV,
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}, {"urls": ["stun:stun1.l.google.com:19302"]}, {"urls": ["stun:stun.services.mozilla.com"]}, {"urls": ["stun:stun.ekiga.net"]}]},
             video_processor_factory=DrowsinessProcessor,
             media_stream_constraints={"video": True, "audio": False},
             async_processing=True,
