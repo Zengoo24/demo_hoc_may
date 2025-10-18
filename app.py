@@ -26,7 +26,7 @@ NEW_WIDTH, NEW_HEIGHT = 640, 480
 # --- Cấu hình Drowsiness (Face Mesh) ---
 MODEL_PATH = "softmax_model_best1.pkl" # PHẢI HUẤN LUYỆN TRÊN 10 FEATS (có Delta EAR và Delta Pitch)
 SCALER_PATH = "scale1.pkl"
-LABEL_MAP_PATH = "label_map_6cls.json" 
+LABEL_MAP_PATH = "label_map_6cls.json" # Cần kiểm tra lại nếu bạn dùng 6 lớp (có nod)
 SMOOTH_WINDOW = 5 
 BLINK_THRESHOLD = 0.20 # Ngưỡng cứng cho BLINK (đã giảm)
 N_FEATURES = 10 # Số lượng đặc trưng mong đợi
@@ -156,7 +156,7 @@ def get_extra_features(landmarks):
     return angle_pitch_extra, forehead_y, cheek_dist
 
 # ======================================================================
-# IV. HÀM TRÍCH XUẤT ĐẶC TRƯNG VÔ LĂNG (WHEEL/HANDS)
+# IV. HÀM TRÍCH XUẤT ĐẶC TRƯNG VÔ LĂNG (WHEEL/HANDS) - KHÔNG SỬA
 # ======================================================================
 
 def detect_wheel_circle(frame):
@@ -279,7 +279,7 @@ def process_static_image(image_file, mesh, W, b, mean, std, id2label):
     return final_image_rgb, result_label
 
 # ----------------------------------------------------------------------
-## VI. HÀM XỬ LÝ ẢNH TĨNH (Wheel)
+## VI. HÀM XỬ LÝ ẢNH TĨNH (Wheel) - CHỈ SỬA LỖI ATTRIBUTEERROR
 # ----------------------------------------------------------------------
 def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL):
     # Đọc ảnh từ file uploader
@@ -335,9 +335,9 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     
     if res_for_drawing.multi_hand_landmarks:
         for hand_landmarks in res_for_drawing.multi_hand_landmarks:
-            # KHẮC PHỤC LỖI: Sử dụng mp_hands đã được định nghĩa cục bộ
+            # ĐÃ SỬA LỖI: Gọi mp_drawing và tham chiếu mp_hands.HAND_CONNECTIONS (Định nghĩa ở global)
             mp_drawing.draw_landmarks( 
-                img_display, hand_landmarks, mp_hands.HAND_CONNECTIONS) # ĐÃ SỬA
+                img_display, hand_landmarks, mp_hands.HAND_CONNECTIONS) 
 
     # Hiển thị nhãn dự đoán
     text = f"{predicted_class.upper()} ({confidence:.1f}%)"
