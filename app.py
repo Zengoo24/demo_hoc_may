@@ -18,7 +18,7 @@ SCALER_PATH = "scale1.pkl"              # CẢNH BÁO: PHẢI CHỨA MEAN/STD CH
 LABEL_MAP_PATH = "label_map_5cls.json"
 
 SMOOTH_WINDOW = 5 # Giữ ở 5 để đảm bảo ổn định cho các nhãn kéo dài (left, right, yawn)
-BLINK_THRESHOLD = 0.25 # HEURISTIC CỨNG ĐỂ BẮT BLINK
+BLINK_THRESHOLD = 0.22 # ĐIỀU CHỈNH: Giảm xuống 0.22 để BLINK CỨNG khó bị kích hoạt hơn
 EPS = 1e-8 
 NEW_WIDTH, NEW_HEIGHT = 640, 480 
 N_FEATURES = 10 # Số lượng đặc trưng mong đợi
@@ -218,7 +218,7 @@ class DrowsinessProcessor(VideoProcessorBase):
 # ----------------------------------------------------------------------
 st.set_page_config(page_title="Demo Softmax - Hybrid Detection", layout="wide")
 st.title("🧠 Nhận diện trạng thái mất tập trung (Hybrid Detection)")
-st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.25) cho BLINK, dùng Softmax cho các hành vi khác.")
+st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.22) cho BLINK, dùng Softmax cho các hành vi khác.")
 st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
 st.markdown("---")
 
