@@ -18,7 +18,7 @@ SCALER_PATH = "scale1.pkl"              # CẢNH BÁO: PHẢI CHỨA MEAN/STD CH
 LABEL_MAP_PATH = "label_map_5cls.json"
 
 SMOOTH_WINDOW = 5 # Giữ ở 5 để đảm bảo ổn định cho các nhãn kéo dài (left, right, yawn)
-BLINK_THRESHOLD = 0.22 # ĐIỀU CHỈNH: Giảm xuống 0.22 để BLINK CỨNG khó bị kích hoạt hơn
+BLINK_THRESHOLD = 0.2 # ĐIỀU CHỈNH: Giảm xuống 0.22 để BLINK CỨNG khó bị kích hoạt hơn
 EPS = 1e-8 
 NEW_WIDTH, NEW_HEIGHT = 640, 480 
 N_FEATURES = 10 # Số lượng đặc trưng mong đợi
@@ -233,3 +233,4 @@ with col2:
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
     )
+
