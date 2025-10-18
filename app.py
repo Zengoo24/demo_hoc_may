@@ -445,7 +445,7 @@ with tab1:
 
 with tab2:
     st.header("2. Dự đoán Ảnh Tĩnh (Khuôn Mặt)")
-    st.markdown("### Tải lên ảnh khuôn mặt để dự đoán trạng thái (Ngủ gật/Mất tập trung)")
+    st.markdown("### Tải lên ảnh khuôn mặt để dự đoán trạng thái Mất tập trung")
     uploaded_file = st.file_uploader("Chọn một ảnh khuôn mặt (.jpg, .png)", type=["jpg", "png", "jpeg"], key="face_upload")
 
     if uploaded_file is not None:
@@ -494,4 +494,5 @@ with tab3:
             
     else:
         st.info("Vui lòng tải lên một ảnh lái xe để kiểm tra vị trí tay.")
+
 
