@@ -335,9 +335,9 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     
     if res_for_drawing.multi_hand_landmarks:
         for hand_landmarks in res_for_drawing.multi_hand_landmarks:
-            # Sửa lỗi: Gọi mp_drawing đã được khai báo ở phạm vi toàn cục
+            # KHẮC PHỤC LỖI: Sử dụng mp_hands đã được định nghĩa cục bộ
             mp_drawing.draw_landmarks( 
-                img_display, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
+                img_display, hand_landmarks, mp_hands.HAND_CONNECTIONS) # ĐÃ SỬA
 
     # Hiển thị nhãn dự đoán
     text = f"{predicted_class.upper()} ({confidence:.1f}%)"
