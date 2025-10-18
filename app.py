@@ -284,7 +284,9 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     
     # Convert RGB to BGR for OpenCV processing (HoughCircles)
     img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-
+    
+    # Khai báo mp_hands cục bộ
+    mp_hands = mp.solutions.hands 
     hands_processor = get_mp_hands_instance()
     
     # 1. Phát hiện vô lăng
@@ -324,13 +326,14 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     confidence = probabilities[predicted_index] * 100
     
     # --- Visualization (Tay) ---
-    mp_hands = mp.solutions.hands
+    # Khai báo mp_hands cục bộ để truy cập drawing_utils
     rgb_for_drawing = cv2.cvtColor(img_display, cv2.COLOR_BGR2RGB)
     res_for_drawing = hands_processor.process(rgb_for_drawing)
     
     if res_for_drawing.multi_hand_landmarks:
         for hand_landmarks in res_for_drawing.multi_hand_landmarks:
-            mp_hands.drawing_utils.draw_landmarks(
+            # SỬA LỖI: mp_hands đã được khai báo cục bộ ở dòng 313
+            mp_hands.drawing_utils.draw_landmarks( 
                 img_display, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
     # Hiển thị nhãn dự đoán
