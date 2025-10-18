@@ -14,7 +14,7 @@ import warnings
 # CẤU HÌNH
 # ==============================
 MODEL_PATH = "softmax_model_best1.pkl" # CẢNH BÁO: PHẢI ĐƯỢC HUẤN LUYỆN VỚI 10 ĐẶC TRƯNG
-SCALER_PATH = "scale.pkl1"              # CẢNH BÁO: PHẢI CHỨA MEAN/STD CHO 10 ĐẶC TRƯNG
+SCALER_PATH = "scale1.pkl"              # CẢNH BÁO: PHẢI CHỨA MEAN/STD CHO 10 ĐẶC TRƯNG
 LABEL_MAP_PATH = "label_map_5cls.json"
 
 SMOOTH_WINDOW = 3 # Độ mượt thấp (3) để tăng độ nhạy cho blink
@@ -225,3 +225,4 @@ with col2:
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
     )
+
