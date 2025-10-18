@@ -266,7 +266,6 @@ tab1, tab2 = st.tabs(["🔴 Dự đoán Live Camera", "🖼️ Dự đoán Ảnh
 mesh_static = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
 
 with tab1:
-    st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.20) cho BLINK, dùng Softmax cho các hành vi khác.")
     st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
     st.markdown("---")
 
@@ -302,7 +301,7 @@ with tab2:
         with col_res:
             st.success("✅ Dự đoán Hoàn tất")
             st.metric(label="Trạng thái Dự đoán", value=predicted_label.upper())
-            st.caption(f"Lưu ý: Delta EAR cho ảnh tĩnh luôn bằng 0.")
 
     else:
         st.info("Vui lòng tải lên một ảnh để bắt đầu dự đoán.")
+
