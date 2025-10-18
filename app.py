@@ -11,24 +11,23 @@ import os
 import warnings 
 
 # ==============================
-# CẤU HÌNH CƠ BẢN
+# CẤU HÌNH
 # ==============================
-MODEL_PATH = "softmax_model_best1.pkl" # Chứa W, b, classes
-SCALER_PATH = "scale1.pkl"              # Chứa X_mean, X_std
+MODEL_PATH = "softmax_model_best1.pkl" # CẢNH BÁO: PHẢI ĐƯỢC HUẤN LUYỆN VỚI 10 ĐẶC TRƯNG
+SCALER_PATH = "scale.pkl1"              # CẢNH BÁO: PHẢI CHỨA MEAN/STD CHO 10 ĐẶC TRƯNG
 LABEL_MAP_PATH = "label_map_5cls.json"
 
-SMOOTH_WINDOW = 3 # Giữ 3 để tăng độ nhạy
+SMOOTH_WINDOW = 3 # Độ mượt thấp (3) để tăng độ nhạy cho blink
 EPS = 1e-8 
-NEW_WIDTH, NEW_HEIGHT = 640, 480 # Kích thước khung hình sau khi resize
-
-# NGƯỠNG EAR CỨNG: ĐÃ LOẠI BỎ THEO YÊU CẦU
+NEW_WIDTH, NEW_HEIGHT = 640, 480 
+N_FEATURES = 10 # Số lượng đặc trưng mong đợi
 
 # ==============================
 # HÀM DỰ ĐOÁN SOFTMAX
 # ==============================
 def softmax_predict(X, W, b):
     """Thực hiện dự đoán Softmax."""
-    # X phải là (N, 9)
+    # X phải là (N, 10)
     logits = X @ W + b
     return np.argmax(logits, axis=1)
 
@@ -48,12 +47,9 @@ def load_assets():
             mean_data = scaler_data["X_mean"]
             std_data = scaler_data["X_std"]
             
-        # Kiểm tra kích thước đặc trưng
-        EXPECTED_FEATURE_SIZE = 9
-        if W.shape[0] != EXPECTED_FEATURE_SIZE:
-             st.error(f"LỖI KHÔNG TƯƠNG THÍCH: Mô hình yêu cầu {W.shape[0]} đặc trưng, nhưng ứng dụng này chỉ trích xuất {EXPECTED_FEATURE_SIZE} đặc trưng tức thời.")
+        if W.shape[0] != N_FEATURES:
+             st.error(f"LỖI KHÔNG TƯƠNG THÍCH: Mô hình yêu cầu {W.shape[0]} đặc trưng, nhưng ứng dụng này trích xuất {N_FEATURES} đặc trưng. Vui lòng kiểm tra lại file model!")
              st.stop()
-
 
         # 3. Tải label map
         with open(LABEL_MAP_PATH, "r") as f:
@@ -63,13 +59,10 @@ def load_assets():
         return W, b, mean_data, std_data, id2label
 
     except FileNotFoundError as e:
-        st.error(f"LỖỖI FILE: Không tìm thấy file tài nguyên. Vui lòng kiểm tra đường dẫn: {e.filename}")
-        st.stop()
-    except KeyError as e:
-        st.error(f"LỖỖI CẤU TRÚC FILE: Kiểm tra cấu trúc file model/scaler (thiếu key: {e}).")
+        st.error(f"LỖI FILE: Không tìm thấy file tài nguyên. Vui lòng kiểm tra đường dẫn: {e.filename}")
         st.stop()
     except Exception as e:
-        st.error(f"LỖỖI LOAD DỮ LIỆU: File tài nguyên bị hỏng (corrupted) hoặc không thể giải mã. Chi tiết: {e}")
+        st.error(f"LỖI LOAD DỮ LIỆU: Chi tiết: {e}")
         st.stop()
 
 # Tải tài sản (Chạy một lần)
@@ -143,80 +136,87 @@ class DrowsinessProcessor(VideoProcessorBase):
         
         self.pred_queue = deque(maxlen=SMOOTH_WINDOW)
         self.last_pred_label = "CHO DU LIEU VAO"
-        self.N_FEATURES = 9 
+        self.N_FEATURES = N_FEATURES
+        self.last_ear_avg = 0.4 # Lịch sử EAR cho Delta EAR
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         frame_array = frame.to_ndarray(format="bgr24")
 
-        # 1. RESIZE KHUNG HÌNH (Tăng tốc độ)
+        # 1. RESIZE FRAME
         frame_resized = cv2.resize(frame_array, (NEW_WIDTH, NEW_HEIGHT))
         h, w = frame_resized.shape[:2]
 
         rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-        # Flip để gương mặt khớp với tọa độ (như trong code test cam desktop)
         rgb_flipped = cv2.flip(rgb, 1) 
         
         results = self.face_mesh.process(rgb_flipped)
         
-        current_pred_label = "unknown"
+        delta_ear_value = 0.0
 
-        # --- 2. TRÍCH XUẤT 9 ĐẶC TRƯNG TỨC THỜI ---
+        # --- 2. TRÍCH XUẤT 10 ĐẶC TRƯNG ---
         if results.multi_face_landmarks:
             landmarks = np.array([[p.x * w, p.y * h, p.z * w] for p in results.multi_face_landmarks[0].landmark])
 
-            # Tính toán 9 đặc trưng tức thời
+            # 6 đặc trưng chính
             ear_l = eye_aspect_ratio(landmarks, True)
             ear_r = eye_aspect_ratio(landmarks, False)
             mar = mouth_aspect_ratio(landmarks)
             yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
+
+            # 3 đặc trưng tĩnh phụ trợ
             angle_pitch_extra, forehead_y, cheek_dist = get_extra_features(landmarks)
-            
-            # ear_avg = (ear_l + ear_r) / 2.0 -> KHÔNG CẦN NỮA
 
-            # Mảng 9 đặc trưng
+            # 1 đặc trưng động (Delta EAR)
+            ear_avg = (ear_l + ear_r) / 2.0
+            delta_ear_value = ear_avg - self.last_ear_avg 
+            self.last_ear_avg = ear_avg # Cập nhật lịch sử
+
+            # Mảng 10 đặc trưng: [EAR_L, EAR_R, MAR, YAW, PITCH, ROLL, ANGLE_PITCH_EXTRA, DELTA_EAR, FOREHEAD_Y, CHEEK_DIST]
             feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
-                              angle_pitch_extra, forehead_y, cheek_dist], dtype=np.float32)
+                              angle_pitch_extra, delta_ear_value, forehead_y, cheek_dist], dtype=np.float32)
 
-            # --- 3. DỰ ĐOÁN SOFTMAX ---
+            # --- 3. CHUẨN HÓA VÀ DỰ ĐOÁN ---
             
-            # Chuẩn hóa chỉ trên 9 đặc trưng
+            # Chuẩn hóa 10 đặc trưng
             feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
             
             # Dự đoán Softmax
             pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
-            pred_label = self.id2label.get(pred_idx, f"Class {pred_idx}")
+            pred_label = self.id2label.get(pred_idx, "UNKNOWN")
             
-            # Thêm vào queue làm mượt
+            # Add to smoothing queue
             self.pred_queue.append(pred_label)
+        
+        else:
+             # Nếu mất mặt, reset lịch sử EAR
+             self.last_ear_avg = 0.4 
 
         # --- 4. SMOOTHING VÀ HIỂN THỊ KẾT QUẢ ---
         if len(self.pred_queue) > 0:
-            # Lấy nhãn xuất hiện nhiều nhất trong cửa sổ làm mượt
             self.last_pred_label = max(set(self.pred_queue), key=self.pred_queue.count)
         
         
         cv2.putText(frame_resized, f"Trang thai: {self.last_pred_label.upper()}", (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
-        # LOẠI BỎ HIỂN THỊ EAR AVG
-        # cv2.putText(frame_resized, f"EAR avg: {ear_avg:.2f}", (10, 110), ...)
+        cv2.putText(frame_resized, f"Delta EAR: {delta_ear_value:.3f}", (10, 110),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
 
-        # BỎ THAO TÁC LẬT LẦN 2
-        frame_display = frame_resized 
+        # Hiển thị ảnh gương
+        frame_display = cv2.flip(frame_resized, 1) 
         return av.VideoFrame.from_ndarray(frame_display, format="bgr24")
 
 # ----------------------------------------------------------------------
 ## GIAO DIỆN STREAMLIT CHÍNH
 # ----------------------------------------------------------------------
-st.set_page_config(page_title="Demo Softmax - 9 Đặc trưng Tức thời", layout="wide")
-st.title("🧠 Nhận diện trạng thái mất tập trung bằng 9 đặc trưng khuôn mặt (Thời gian thực)")
-st.success(f"Mô hình sẵn sàng! Các nhãn: {classes} | Cần 9 đặc trưng.")
+st.set_page_config(page_title="Demo Softmax - 10 Features (Static + Delta EAR)", layout="wide")
+st.title("🧠 Nhận diện trạng thái mất tập trung (10 Đặc trưng - Static + Delta EAR)")
+st.warning("CẢNH BÁO: Mô hình phải được huấn luyện lại với 10 đặc trưng (bao gồm Delta EAR) để hoạt động chính xác!")
 st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
 st.markdown("---")
 
-# === Đã thêm cấu trúc cột để căn giữa và thu hẹp màn hình video ===
-col1, col2, col3 = st.columns([1, 4, 1]) # Tỷ lệ 1:4:1 giúp căn giữa video
+col1, col2, col3 = st.columns([1, 4, 1]) 
 
-with col2: # Đặt component vào cột giữa
+with col2: 
     webrtc_streamer(
         key="softmax_driver_live",
         mode=WebRtcMode.SENDRECV,
