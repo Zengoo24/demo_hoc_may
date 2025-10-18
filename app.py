@@ -17,7 +17,7 @@ MODEL_PATH = "softmax_model_best1.pkl" # CẢNH BÁO: PHẢI ĐƯỢC HUẤN LUY
 SCALER_PATH = "scale1.pkl"              # CẢNH BÁO: PHẢI CHỨA MEAN/STD CHO 10 ĐẶC TRƯNG
 LABEL_MAP_PATH = "label_map_5cls.json"
 
-SMOOTH_WINDOW = 1 # ĐẶT LÀ 1 ĐỂ LOẠI BỎ SMOOTHING VÀ KIỂM TRA PREDICTION TỨC THỜI (FLICKERING)
+SMOOTH_WINDOW = 2 # ĐẶT LÀ 1 ĐỂ LOẠI BỎ SMOOTHING VÀ KIỂM TRA PREDICTION TỨC THỜI (FLICKERING)
 EPS = 1e-8 
 NEW_WIDTH, NEW_HEIGHT = 640, 480 
 N_FEATURES = 10 # Số lượng đặc trưng mong đợi
@@ -226,4 +226,5 @@ with col2:
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
     )
+
 
