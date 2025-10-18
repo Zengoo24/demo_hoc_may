@@ -260,7 +260,7 @@ class DrowsinessProcessor(VideoProcessorBase):
 ## GIAO DIỆN STREAMLIT CHÍNH
 # ----------------------------------------------------------------------
 st.set_page_config(page_title="Demo Softmax - Hybrid Detection", layout="wide")
-st.title("🧠 Nhận diện trạng thái mất tập trung (Hybrid Detection)")
+st.title("🧠 Nhận diện hành vi mất tập trung ")
 
 tab1, tab2 = st.tabs(["🔴 Dự đoán Live Camera", "🖼️ Dự đoán Ảnh Tĩnh"])
 mesh_static = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
@@ -304,4 +304,5 @@ with tab2:
 
     else:
         st.info("Vui lòng tải lên một ảnh để bắt đầu dự đoán.")
+
 
