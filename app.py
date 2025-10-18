@@ -422,15 +422,13 @@ class DrowsinessProcessor(VideoProcessorBase):
 # ======================================================================
 # VIII. GIAO DIỆN STREAMLIT CHÍNH
 # ======================================================================
-st.set_page_config(page_title="Demo Softmax - Hybrid Detection", layout="wide")
-st.title("🧠 Ứng dụng Hybrid Nhận diện Trạng thái Lái xe")
+st.set_page_config(page_title="Demo nhận diện các hành vi mất tập trung - Softmax ", layout="wide")
 
 tab1, tab2, tab3 = st.tabs(["🔴 Dự đoán Live Camera", "🖼️ Dự đoán Ảnh Tĩnh (Khuôn Mặt)", "🚗 Kiểm tra Vô Lăng (Tay)"])
 mesh_static = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
 
 with tab1:
     st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
-    st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.20) cho BLINK, dùng Softmax cho các hành vi khác.")
     st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
     st.markdown("---")
 
@@ -496,3 +494,4 @@ with tab3:
             
     else:
         st.info("Vui lòng tải lên một ảnh lái xe để kiểm tra vị trí tay.")
+
