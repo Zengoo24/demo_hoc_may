@@ -11,6 +11,9 @@ import os
 import warnings 
 from PIL import Image
 
+# Thêm khai báo mp_drawing (MP Solutions Drawing Utilities)
+mp_drawing = mp.solutions.drawing_utils
+
 # ======================================================================
 # I. CẤU HÌNH VÀ HẰNG SỐ CHUNG
 # ======================================================================
@@ -326,14 +329,13 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     confidence = probabilities[predicted_index] * 100
     
     # --- Visualization (Tay) ---
-    # Khai báo mp_hands cục bộ để truy cập drawing_utils
     rgb_for_drawing = cv2.cvtColor(img_display, cv2.COLOR_BGR2RGB)
     res_for_drawing = hands_processor.process(rgb_for_drawing)
     
     if res_for_drawing.multi_hand_landmarks:
         for hand_landmarks in res_for_drawing.multi_hand_landmarks:
-            # SỬA LỖI: mp_hands đã được khai báo cục bộ ở dòng 313
-            mp_hands.drawing_utils.draw_landmarks( 
+            # SỬA LỖI: Thay thế mp_hands.drawing_utils bằng mp_drawing
+            mp_drawing.draw_landmarks( 
                 img_display, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
     # Hiển thị nhãn dự đoán
@@ -398,7 +400,7 @@ class DrowsinessProcessor(VideoProcessorBase):
                 feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                                 angle_pitch_extra, delta_ear_value, forehead_y, cheek_dist], dtype=np.float32)
 
-                feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
+                feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:N_FEATURES] + EPS)
                 pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
                 predicted_label_frame = self.id2label.get(pred_idx, "UNKNOWN")
             
@@ -428,6 +430,7 @@ mesh_static = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, ref
 
 with tab1:
     st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
+    st.warning("Phương pháp Hybrid: Dùng luật cứng (EAR < 0.20) cho BLINK, dùng Softmax cho các hành vi khác.")
     st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
     st.markdown("---")
 
@@ -493,4 +496,3 @@ with tab3:
             
     else:
         st.info("Vui lòng tải lên một ảnh lái xe để kiểm tra vị trí tay.")
-
